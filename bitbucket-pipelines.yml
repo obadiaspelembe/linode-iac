@@ -1,0 +1,16 @@
+# image:
+#   Docker image options page
+image:
+  name: obadias/atlassian-default-image-wterraform:latest
+  username: $DOCKER_REGISTRY_USERNAME
+  password: $DOCKER_REGISTRY_PASSWORD
+
+pipelines:
+  default:
+    - step:
+        name: terraform-jobs
+        script:
+          - terraform -chdir="src" init 
+          - terraform -chdir="src" plan
+          # - terraform -chdir="src" apply -auto-approve
+          - terraform -chdir="src" destroy -auto-approve
