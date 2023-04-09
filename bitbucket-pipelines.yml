@@ -1,16 +1,55 @@
-# image:
-#   Docker image options page
 image:
-  name: obadias/atlassian-default-image-wterraform:latest
+  name: obadias/atlassian-default-image-wterraform:0.0.1-alpha
   username: $DOCKER_REGISTRY_USERNAME
   password: $DOCKER_REGISTRY_PASSWORD
 
-pipelines:
-  default:
-    - step:
-        name: terraform-jobs
+definitions:
+  steps: 
+    - step: &terraform-plan
+        name: terraform-plan
         script:
+          - linsync pull src/terraform.tfstate go
+          - terraform -chdir="src" init  
+          - terraform -chdir="src" plan 
+          - linsync push src/terraform.tfstate go 
+    - step: &terraform-apply
+        name: terraform-apply
+        trigger: manual
+        script:
+          - linsync pull src/terraform.tfstate go
           - terraform -chdir="src" init 
-          - terraform -chdir="src" plan
-          # - terraform -chdir="src" apply -auto-approve
-          - terraform -chdir="src" destroy -auto-approve
+          - terraform -chdir="src" apply -auto-approve
+          - linsync push src/terraform.tfstate go 
+    - step: &terraform-destroy
+        name: terraform-destroy
+        trigger: manual
+        script:
+          - linsync pull src/terraform.tfstate go
+          - terraform -chdir="src" init
+          - terraform -chdir="src" destroy -auto-approve 
+          - linsync push src/terraform.tfstate go
+
+pipelines:
+  default: 
+  - step: *terraform-plan
+  custom:
+    parallelGroupWithManualSteps:
+      - step: *terraform-plan
+      - parallel:
+        - step: *terraform-apply            
+        - step: *terraform-destroy
+
+  branches:
+    '{master,develop}':
+    - step: *terraform-plan
+    - parallel:
+      - step: *terraform-apply
+      - step: *terraform-destroy 
+
+  pull-requests:
+    feat/*:
+    - step: *terraform-plan
+    release/*:
+    - step: *terraform-plan
+    hotfix/*:
+    - step: *terraform-plan
