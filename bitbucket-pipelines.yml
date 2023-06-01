@@ -1,0 +1,74 @@
+image:
+  name: obadias/bitbucket-cibase:linsync-ansible-1.0.0
+  username: $DOCKER_REGISTRY_USERNAME
+  password: $DOCKER_REGISTRY_PASSWORD
+
+definitions:
+  steps: 
+    - step: &terraform-plan
+        name: terraform-plan
+        script:
+          - linsync pull src/terraform.tfstate
+          - terraform -chdir="src" init  
+          - terraform -chdir="src" plan  
+        artifacts: 
+          - src/terraform.tfstate
+    - step: &terraform-apply
+        name: terraform-apply
+        trigger: manual
+        script: 
+          - terraform -chdir="src" init 
+          - terraform -chdir="src" apply -auto-approve
+          - terraform -chdir="src" output -raw server_host >> .server_host
+          - linsync push src/terraform.tfstate
+        artifacts: 
+          - .server_host
+
+    - step: &ansible-build
+        name: ansible-build
+        trigger: manual
+        script: 
+          - apt-get update
+          - apt-get install sshpass
+          - echo "linode_server ansible_host=$(eval cat .server_host)" >> hosts
+          - ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -u root -i hosts -e 'ansible_user=root' -e 'ansible_password=$TF_VAR_root_pass' -e 'github_repo=https://github.com/obadiaspelembe/monolithic-api.git' playbook.yml
+       
+    - step: &terraform-destroy
+        name: terraform-destroy
+        trigger: manual
+        script: 
+          - linsync pull src/terraform.tfstate
+          - terraform -chdir="src" init
+          - terraform -chdir="src" destroy -auto-approve 
+          - linsync push src/terraform.tfstate
+          
+
+pipelines:
+  default: 
+  - step: *terraform-plan
+  custom:
+    parallelGroupWithManualSteps:
+      - step: *terraform-plan
+      - parallel:
+        - step: *terraform-apply            
+        - step: *terraform-destroy
+
+  branches:
+    '{master,develop}':
+    - step: *terraform-plan
+    - parallel:
+      - step: *terraform-apply    
+      - step: *ansible-build
+      - step: *terraform-destroy
+
+  pull-requests:
+    feat/*:
+    - step: *terraform-plan
+    release/*:
+    - step: *terraform-plan
+    - step: *terraform-apply 
+    - step: *ansible-build 
+    hotfix/*:
+    - step: *terraform-plan
+    - step: *terraform-apply 
+    - step: *ansible-build
