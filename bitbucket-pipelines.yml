@@ -1,5 +1,5 @@
 image:
-  name: obadias/atlassian-default-image-wterraform:0.0.1-alpha
+  name: obadias/bitbucket-cibase:linsync-ansible-1.0.0
   username: $DOCKER_REGISTRY_USERNAME
   password: $DOCKER_REGISTRY_PASSWORD
 
@@ -8,26 +8,40 @@ definitions:
     - step: &terraform-plan
         name: terraform-plan
         script:
-          - linsync pull src/terraform.tfstate go
+          - linsync pull src/terraform.tfstate
           - terraform -chdir="src" init  
-          - terraform -chdir="src" plan 
-          - linsync push src/terraform.tfstate go 
+          - terraform -chdir="src" plan  
+        artifacts: 
+          - src/terraform.tfstate
     - step: &terraform-apply
         name: terraform-apply
         trigger: manual
-        script:
-          - linsync pull src/terraform.tfstate go
+        script: 
           - terraform -chdir="src" init 
           - terraform -chdir="src" apply -auto-approve
-          - linsync push src/terraform.tfstate go 
+          - terraform -chdir="src" output -raw server_host >> .server_host
+          - linsync push src/terraform.tfstate
+        artifacts: 
+          - .server_host
+
+    - step: &ansible-build
+        name: ansible-build
+        trigger: manual
+        script: 
+          - apt-get update
+          - apt-get install sshpass
+          - echo "linode_server ansible_host=$(eval cat .server_host)" >> hosts
+          - ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -u root -i hosts -e 'ansible_user=root' -e 'ansible_password=$TF_VAR_root_pass' -e 'github_repo=https://github.com/obadiaspelembe/monolithic-api.git' playbook.yml
+       
     - step: &terraform-destroy
         name: terraform-destroy
         trigger: manual
-        script:
-          - linsync pull src/terraform.tfstate go
+        script: 
+          - linsync pull src/terraform.tfstate
           - terraform -chdir="src" init
           - terraform -chdir="src" destroy -auto-approve 
-          - linsync push src/terraform.tfstate go
+          - linsync push src/terraform.tfstate
+          
 
 pipelines:
   default: 
@@ -43,13 +57,18 @@ pipelines:
     '{master,develop}':
     - step: *terraform-plan
     - parallel:
-      - step: *terraform-apply
-      - step: *terraform-destroy 
+      - step: *terraform-apply    
+      - step: *ansible-build
+      - step: *terraform-destroy
 
   pull-requests:
     feat/*:
     - step: *terraform-plan
     release/*:
     - step: *terraform-plan
+    - step: *terraform-apply 
+    - step: *ansible-build 
     hotfix/*:
     - step: *terraform-plan
+    - step: *terraform-apply 
+    - step: *ansible-build
